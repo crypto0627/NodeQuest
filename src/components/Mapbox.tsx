@@ -58,6 +58,40 @@ const MapComponent: React.FC<MapComponentProps> = ({ onStartLaserGame }) => {
     }
   };
 
+  type MoveDirection = 'up' | 'down' | 'left' | 'right';
+
+  const movePlayer = (direction: MoveDirection) => {
+    setPlayerPosition(([lng, lat]) => {
+      const step = 0.0007;
+      let newLng = lng, newLat = lat;
+      switch (direction) {
+        case 'up':    newLat += step; break;
+        case 'down':  newLat -= step; break;
+        case 'left':  newLng -= step; break;
+        case 'right': newLng += step; break;
+      }
+      if (playerMarkerRef.current) playerMarkerRef.current.setLngLat([newLng, newLat]);
+      mapRef.current?.setCenter([newLng, newLat]);
+      return [newLng, newLat];
+    });
+  };
+
+  const moveIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleMoveStart = (direction: MoveDirection, e: React.TouchEvent | React.MouseEvent) => {
+    e.preventDefault();
+    if (moveIntervalRef.current) clearInterval(moveIntervalRef.current);
+    movePlayer(direction);
+    moveIntervalRef.current = setInterval(() => movePlayer(direction), 100);
+  };
+
+  const handleMoveEnd = () => {
+    if (moveIntervalRef.current) {
+      clearInterval(moveIntervalRef.current);
+      moveIntervalRef.current = null;
+    }
+  };
+
   useEffect(() => {
     // Add your Mapbox access token here
     mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
@@ -121,23 +155,16 @@ const MapComponent: React.FC<MapComponentProps> = ({ onStartLaserGame }) => {
 
     // 監聽鍵盤移動
     const handleKeyDown = (e: KeyboardEvent) => {
-      setPlayerPosition(([lng, lat]) => {
-        const step = 0.0007;
-        let moved = false;
-        let newLng = lng, newLat = lat;
-        switch (e.key.toLowerCase()) {
-          case 'arrowup': case 'w': newLat += step; moved = true; break;
-          case 'arrowdown': case 's': newLat -= step; moved = true; break;
-          case 'arrowleft': case 'a': newLng -= step; moved = true; break;
-          case 'arrowright': case 'd': newLng += step; moved = true; break;
-        }
-        if (moved) {
-          if (playerMarkerRef.current) playerMarkerRef.current.setLngLat([newLng, newLat]);
-          mapRef.current?.setCenter([newLng, newLat]);
-          return [newLng, newLat];
-        }
-        return [lng, lat];
-      });
+      let direction: MoveDirection | null = null;
+      switch (e.key.toLowerCase()) {
+        case 'arrowup': case 'w': direction = 'up'; break;
+        case 'arrowdown': case 's': direction = 'down'; break;
+        case 'arrowleft': case 'a': direction = 'left'; break;
+        case 'arrowright': case 'd': direction = 'right'; break;
+      }
+      if (direction) {
+        movePlayer(direction);
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
 
@@ -191,6 +218,13 @@ const MapComponent: React.FC<MapComponentProps> = ({ onStartLaserGame }) => {
       >
         {loading ? 'Locating...' : 'Return to my location'}
       </button>
+      {/* On-screen controls for mobile */}
+      <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-10 grid w-48 grid-cols-3 grid-rows-3 gap-2 sm:left-12 sm:-translate-x-0">
+        <button onMouseDown={e => handleMoveStart('up', e)} onMouseUp={handleMoveEnd} onMouseLeave={handleMoveEnd} onTouchStart={e => handleMoveStart('up', e)} onTouchEnd={handleMoveEnd} className="col-start-2 row-start-1 rounded-xl bg-black/40 p-4 text-white backdrop-blur-sm active:bg-white/20">↑</button>
+        <button onMouseDown={e => handleMoveStart('left', e)} onMouseUp={handleMoveEnd} onMouseLeave={handleMoveEnd} onTouchStart={e => handleMoveStart('left', e)} onTouchEnd={handleMoveEnd} className="col-start-1 row-start-2 rounded-xl bg-black/40 p-4 text-white backdrop-blur-sm active:bg-white/20">←</button>
+        <button onMouseDown={e => handleMoveStart('down', e)} onMouseUp={handleMoveEnd} onMouseLeave={handleMoveEnd} onTouchStart={e => handleMoveStart('down', e)} onTouchEnd={handleMoveEnd} className="col-start-2 row-start-2 rounded-xl bg-black/40 p-4 text-white backdrop-blur-sm active:bg-white/20">↓</button>
+        <button onMouseDown={e => handleMoveStart('right', e)} onMouseUp={handleMoveEnd} onMouseLeave={handleMoveEnd} onTouchStart={e => handleMoveStart('right', e)} onTouchEnd={handleMoveEnd} className="col-start-3 row-start-2 rounded-xl bg-black/40 p-4 text-white backdrop-blur-sm active:bg-white/20">→</button>
+      </div>
       {/* Loading animation */}
       {showLoading && (
         <div className="fixed top-0 left-0 w-screen h-screen z-20 flex items-center justify-center bg-black/20">
