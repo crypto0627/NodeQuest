@@ -16,6 +16,8 @@ const MapComponent: React.FC<MapComponentProps> = ({ onStartLaserGame }) => {
   const [showLoading, setShowLoading] = useState(false);
   const [showDialog, setShowDialog] = useState(false);
   const [hasTriggeredChallenge, setHasTriggeredChallenge] = useState(false);
+  const [coordInput, setCoordInput] = useState('');
+  const [coordError, setCoordError] = useState<string | null>(null);
 
   // 台北101座標
   const TAIPEI101 = [121.564444, 25.033611];
@@ -56,6 +58,31 @@ const MapComponent: React.FC<MapComponentProps> = ({ onStartLaserGame }) => {
     } else {
       alert('Start LaserGame Challenge！(Please connect to LaserCorridorGame)');
     }
+  };
+
+  const handleFlyTo = () => {
+    setCoordError(null);
+    const parts = coordInput.split(',').map(s => s.trim());
+    if (parts.length !== 2) {
+      setCoordError('Invalid format. Use: lng, lat');
+      return;
+    }
+
+    const lng = parseFloat(parts[0]);
+    const lat = parseFloat(parts[1]);
+
+    if (isNaN(lng) || isNaN(lat) || lng < -180 || lng > 180 || lat < -90 || lat > 90) {
+      setCoordError('Invalid coordinates.');
+      return;
+    }
+
+    const newPosition: [number, number] = [lng, lat];
+    mapRef.current?.flyTo({ center: newPosition, zoom: 15, speed: 1.5 });
+    setPlayerPosition(newPosition);
+    if (playerMarkerRef.current) {
+      playerMarkerRef.current.setLngLat(newPosition);
+    }
+    setCoordInput('');
   };
 
   type MoveDirection = 'up' | 'down' | 'left' | 'right';
@@ -204,6 +231,33 @@ const MapComponent: React.FC<MapComponentProps> = ({ onStartLaserGame }) => {
         ref={mapContainerRef}
         className="fixed top-0 left-0 w-screen h-screen z-0"
       />
+      {/* Fly to coordinates input */}
+      <div className="fixed top-6 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center gap-2">
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={coordInput}
+            onChange={(e) => {
+              setCoordInput(e.target.value);
+              if (coordError) setCoordError(null);
+            }}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleFlyTo() }}
+            placeholder="e.g., 121.56, 25.03"
+            className="w-48 rounded-lg bg-black/60 px-4 py-2 text-white backdrop-blur-sm transition-all focus:outline-none focus:ring-2 focus:ring-[#39ff14]"
+          />
+          <button
+            onClick={handleFlyTo}
+            className="rounded-lg bg-[#222] px-5 py-2 font-bold text-[#39ff14] transition-colors hover:bg-[#39ff14] hover:text-[#222]"
+          >
+            Fly
+          </button>
+        </div>
+        {coordError && (
+          <div className="mt-1 rounded-md bg-red-900/80 px-3 py-1 text-sm text-white backdrop-blur-sm">
+            {coordError}
+          </div>
+        )}
+      </div>
       <button
         onClick={handleLocate}
         disabled={loading}
