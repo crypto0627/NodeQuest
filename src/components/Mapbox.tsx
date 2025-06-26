@@ -1,9 +1,101 @@
 import React, { useEffect, useRef, useState } from 'react';
-import mapboxgl from 'mapbox-gl';
+import mapboxgl, { CustomLayerInterface, LngLatLike } from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 interface MapComponentProps {
   onStartLaserGame?: () => void;
+}
+
+/**
+ * A custom Mapbox GL layer to render a 3D model with Three.js.
+ */
+class ThreeJSModelLayer implements CustomLayerInterface {
+    id: string;
+    type: 'custom' = 'custom';
+    renderingMode: '3d' | '2d' = '3d';
+
+    private map?: mapboxgl.Map;
+    private renderer?: THREE.WebGLRenderer;
+    private scene: THREE.Scene;
+    private camera: THREE.Camera;
+    private modelTransform: {
+        translateX: number;
+        translateY: number;
+        translateZ: number;
+        rotateX: number;
+        rotateY: number;
+        rotateZ: number;
+        scale: number;
+    };
+
+    constructor(id: string, modelOrigin: LngLatLike, modelAltitude: number) {
+        this.id = id;
+        this.scene = new THREE.Scene();
+        this.camera = new THREE.Camera();
+
+        const modelRotate = [Math.PI / 2, Math.PI, 0];
+        const modelAsMercatorCoordinate = mapboxgl.MercatorCoordinate.fromLngLat(
+            modelOrigin,
+            modelAltitude
+        );
+
+        this.modelTransform = {
+            translateX: modelAsMercatorCoordinate.x,
+            translateY: modelAsMercatorCoordinate.y,
+            translateZ: modelAsMercatorCoordinate.z,
+            rotateX: modelRotate[0],
+            rotateY: modelRotate[1],
+            rotateZ: modelRotate[2],
+            scale: modelAsMercatorCoordinate.meterInMercatorCoordinateUnits() * 45,
+        };
+    }
+
+    onAdd(map: mapboxgl.Map, gl: WebGLRenderingContext) {
+        this.map = map;
+        this.renderer = new THREE.WebGLRenderer({
+            canvas: map.getCanvas(),
+            context: gl,
+            antialias: true,
+        });
+        this.renderer.autoClear = false;
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 2.5);
+        directionalLight.position.set(0, -1, 1);
+        this.scene.add(directionalLight);
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+        this.scene.add(ambientLight);
+
+        const loader = new GLTFLoader();
+        loader.load('/sprites/base_basic_pbr.glb', (gltf) => {
+            this.scene.add(gltf.scene);
+        });
+    }
+
+    render(gl: WebGLRenderingContext, matrix: number[]) {
+        const { rotateX, rotateY, rotateZ, translateX, translateY, translateZ, scale } = this.modelTransform;
+
+        const rotationX = new THREE.Matrix4().makeRotationX(rotateX);
+        const rotationY = new THREE.Matrix4().makeRotationY(rotateY);
+        const rotationZ = new THREE.Matrix4().makeRotationZ(rotateZ);
+
+        const m = new THREE.Matrix4().fromArray(matrix);
+        const l = new THREE.Matrix4()
+            .makeTranslation(translateX, translateY, translateZ)
+            .scale(new THREE.Vector3(scale, -scale, scale))
+            .multiply(rotationX)
+            .multiply(rotationY)
+            .multiply(rotationZ);
+
+        this.camera.projectionMatrix.copy(m).multiply(l);
+        if (this.renderer) {
+          this.renderer.resetState();
+          this.renderer.render(this.scene, this.camera);
+        }
+        this.map?.triggerRepaint();
+    }
 }
 
 const MapComponent: React.FC<MapComponentProps> = ({ onStartLaserGame }) => {
@@ -18,9 +110,10 @@ const MapComponent: React.FC<MapComponentProps> = ({ onStartLaserGame }) => {
   const [hasTriggeredChallenge, setHasTriggeredChallenge] = useState(false);
   const [coordInput, setCoordInput] = useState('');
   const [coordError, setCoordError] = useState<string | null>(null);
+  const [mapView, setMapView] = useState<'top-down' | 'angled'>('top-down');
 
   // 台北101座標
-  const TAIPEI101 = [121.564444, 25.033611];
+  const TAIPEI101: [number, number] = [121.564444, 25.033611];
   // 計算經緯度距離（公尺）
   function getDistance(p1: number[], p2: number[]) {
     const [lng1, lat1] = p1;
@@ -48,7 +141,7 @@ const MapComponent: React.FC<MapComponentProps> = ({ onStartLaserGame }) => {
     if (dist >= 80 && hasTriggeredChallenge) {
       setHasTriggeredChallenge(false);
     }
-  }, [playerPosition]);
+  }, [playerPosition, hasTriggeredChallenge]);
 
   // Dialog 按下確認
   const handleStartLaserGame = () => {
@@ -119,21 +212,39 @@ const MapComponent: React.FC<MapComponentProps> = ({ onStartLaserGame }) => {
     }
   };
 
-  useEffect(() => {
-    // Add your Mapbox access token here
-    mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+  const handleRotate = (direction: 'left' | 'right') => {
+    if (!mapRef.current) return;
+    const currentBearing = mapRef.current.getBearing();
+    const newBearing = direction === 'left' ? currentBearing - 15 : currentBearing + 15;
+    mapRef.current.easeTo({
+      bearing: newBearing,
+      duration: 500,
+    });
+  };
 
-    // Initialize the map
+  useEffect(() => {
+    if (!mapRef.current) return;
+
+    const targetOptions = {
+      duration: 1500,
+      pitch: mapView === 'angled' ? 75 : 0,
+      bearing: mapView === 'angled' ? -20 : 0,
+    };
+    mapRef.current.easeTo(targetOptions);
+  }, [mapView]);
+
+  useEffect(() => {
+    mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!;
+
     mapRef.current = new mapboxgl.Map({
       container: mapContainerRef.current!,
       style: 'mapbox://styles/mapbox/streets-v12',
-      center: [121.566972, 25.040472], // starting position [lng, lat]
-      zoom: 9, // starting zoom
+      center: [121.566972, 25.040472],
+      zoom: 9,
       pitch: 0,
       bearing: 0
     });
 
-    // 等地圖載入後再做定位與 marker
     mapRef.current.on('load', () => {
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
@@ -145,9 +256,7 @@ const MapComponent: React.FC<MapComponentProps> = ({ onStartLaserGame }) => {
             markerRef.current = new mapboxgl.Marker({ color: '#39ff14' })
               .setLngLat([lng, lat])
               .addTo(mapRef.current!);
-            // 設定 player 初始位置
             setPlayerPosition([lng, lat]);
-            // 新增 player marker
             if (playerMarkerRef.current) playerMarkerRef.current.remove();
             playerMarkerRef.current = new mapboxgl.Marker({ color: '#39ff14' })
               .setLngLat([lng, lat])
@@ -155,8 +264,6 @@ const MapComponent: React.FC<MapComponentProps> = ({ onStartLaserGame }) => {
               .addTo(mapRef.current!);
           },
           (err) => {
-            // 定位失敗，維持預設中心
-            // 新增 player marker 在預設中心
             if (playerMarkerRef.current) playerMarkerRef.current.remove();
             playerMarkerRef.current = new mapboxgl.Marker({ color: '#39ff14' })
               .setLngLat([-74.5, 40])
@@ -166,21 +273,17 @@ const MapComponent: React.FC<MapComponentProps> = ({ onStartLaserGame }) => {
           { enableHighAccuracy: true }
         );
       } else {
-        // 新增 player marker 在預設中心
         if (playerMarkerRef.current) playerMarkerRef.current.remove();
         playerMarkerRef.current = new mapboxgl.Marker({ color: '#39ff14' })
           .setLngLat([-74.5, 40])
           .setPopup(new mapboxgl.Popup({ offset: 25 }).setText('You'))
           .addTo(mapRef.current!);
       }
-      // 新增台北101標點
-      new mapboxgl.Marker({ color: '#ff2222' })
-        .setLngLat([121.564444, 25.033611])
-        .setPopup(new mapboxgl.Popup({ offset: 25 }).setText('Taipei 101'))
-        .addTo(mapRef.current!);
+      
+      const customLayer = new ThreeJSModelLayer('3d-model', TAIPEI101, 0);
+      mapRef.current!.addLayer(customLayer);
     });
 
-    // 監聽鍵盤移動
     const handleKeyDown = (e: KeyboardEvent) => {
       let direction: MoveDirection | null = null;
       switch (e.key.toLowerCase()) {
@@ -195,14 +298,12 @@ const MapComponent: React.FC<MapComponentProps> = ({ onStartLaserGame }) => {
     };
     window.addEventListener('keydown', handleKeyDown);
 
-    // Clean up on unmount
     return () => {
       mapRef.current?.remove();
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
 
-  // 點擊按鈕回到 GPS 位置
   const handleLocate = () => {
     if (!navigator.geolocation || !mapRef.current) return;
     setLoading(true);
@@ -231,7 +332,7 @@ const MapComponent: React.FC<MapComponentProps> = ({ onStartLaserGame }) => {
         ref={mapContainerRef}
         className="fixed top-0 left-0 w-screen h-screen z-0"
       />
-      {/* Fly to coordinates input */}
+      {/* UI Elements */}
       <div className="fixed top-6 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center gap-2">
         <div className="flex items-center gap-2">
           <input
@@ -272,14 +373,50 @@ const MapComponent: React.FC<MapComponentProps> = ({ onStartLaserGame }) => {
       >
         {loading ? 'Locating...' : 'Return to my location'}
       </button>
-      {/* On-screen controls for mobile */}
       <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-10 grid w-48 grid-cols-3 grid-rows-3 gap-2 sm:left-12 sm:-translate-x-0">
         <button onMouseDown={e => handleMoveStart('up', e)} onMouseUp={handleMoveEnd} onMouseLeave={handleMoveEnd} onTouchStart={e => handleMoveStart('up', e)} onTouchEnd={handleMoveEnd} className="col-start-2 row-start-1 rounded-xl bg-black/40 p-4 text-white backdrop-blur-sm active:bg-white/20">↑</button>
         <button onMouseDown={e => handleMoveStart('left', e)} onMouseUp={handleMoveEnd} onMouseLeave={handleMoveEnd} onTouchStart={e => handleMoveStart('left', e)} onTouchEnd={handleMoveEnd} className="col-start-1 row-start-2 rounded-xl bg-black/40 p-4 text-white backdrop-blur-sm active:bg-white/20">←</button>
         <button onMouseDown={e => handleMoveStart('down', e)} onMouseUp={handleMoveEnd} onMouseLeave={handleMoveEnd} onTouchStart={e => handleMoveStart('down', e)} onTouchEnd={handleMoveEnd} className="col-start-2 row-start-2 rounded-xl bg-black/40 p-4 text-white backdrop-blur-sm active:bg-white/20">↓</button>
         <button onMouseDown={e => handleMoveStart('right', e)} onMouseUp={handleMoveEnd} onMouseLeave={handleMoveEnd} onTouchStart={e => handleMoveStart('right', e)} onTouchEnd={handleMoveEnd} className="col-start-3 row-start-2 rounded-xl bg-black/40 p-4 text-white backdrop-blur-sm active:bg-white/20">→</button>
       </div>
-      {/* Loading animation */}
+      {/* View Control Buttons */}
+      <div className="fixed bottom-10 right-10 z-10 flex flex-col items-end gap-2">
+        <button
+          onClick={() => setMapView(v => v === 'top-down' ? 'angled' : 'top-down')}
+          className={`
+            w-full bg-[#222] text-[#39ff14] border-2 border-[#39ff14] rounded-lg
+            px-5 py-2 font-bold text-lg cursor-pointer shadow-[0_2px_12px_#0008]
+            transition-colors duration-200
+            hover:bg-[#39ff14] hover:text-[#222]
+          `}
+        >
+          Toggle View
+        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => handleRotate('left')}
+            className={`
+              bg-[#222] text-[#39ff14] border-2 border-[#39ff14] rounded-lg
+              px-4 py-2 font-bold text-lg cursor-pointer shadow-[0_2px_12px_#0008]
+              transition-colors duration-200
+              hover:bg-[#39ff14] hover:text-[#222]
+            `}
+          >
+            &lt;
+          </button>
+          <button
+            onClick={() => handleRotate('right')}
+            className={`
+              bg-[#222] text-[#39ff14] border-2 border-[#39ff14] rounded-lg
+              px-4 py-2 font-bold text-lg cursor-pointer shadow-[0_2px_12px_#0008]
+              transition-colors duration-200
+              hover:bg-[#39ff14] hover:text-[#222]
+            `}
+          >
+            &gt;
+          </button>
+        </div>
+      </div>
       {showLoading && (
         <div className="fixed top-0 left-0 w-screen h-screen z-20 flex items-center justify-center bg-black/20">
           <div
@@ -291,7 +428,6 @@ const MapComponent: React.FC<MapComponentProps> = ({ onStartLaserGame }) => {
           />
         </div>
       )}
-      {/* Dialog */}
       {showDialog && (
         <div className="fixed top-0 left-0 w-screen h-screen z-30 flex items-center justify-center bg-black/40">
           <div

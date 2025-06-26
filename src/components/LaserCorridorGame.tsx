@@ -47,6 +47,7 @@ export default function LaserCorridorGame({ onClose, onRestart }: { onClose?: ()
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(ref.current.clientWidth, ref.current.clientHeight);
     renderer.shadowMap.enabled = true;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
     while (ref.current.firstChild) ref.current.removeChild(ref.current.firstChild);
     ref.current.appendChild(renderer.domElement);
     const composer = new EffectComposer(renderer);
@@ -55,7 +56,7 @@ export default function LaserCorridorGame({ onClose, onRestart }: { onClose?: ()
     // --- Game Elements Creation ---
     const backgroundElements = createCyberpunkBackground(scene, END_Z);
     const { floorMeshes, floorBodies } = createInfiniteFloor(scene, world);
-    const { playerHolder, playerBody, emissiveMat } = createPlayer(scene, world);
+    const { playerHolder, playerBody } = createPlayer(scene, world);
     const lasers = createLaserLayout(scene);
     
     // --- Lighting ---
@@ -154,7 +155,7 @@ export default function LaserCorridorGame({ onClose, onRestart }: { onClose?: ()
       // Player
       playerHolder.scale.y = 1 + 0.08 * Math.sin(now * 0.008);
       playerHolder.traverse((child) => {
-        if (child instanceof THREE.Mesh && child.material === emissiveMat) {
+        if (child instanceof THREE.Mesh) {
           (child.material as THREE.MeshPhysicalMaterial).emissiveIntensity = 2.0 + 1.5 * Math.sin(now * 0.005);
         }
       });
