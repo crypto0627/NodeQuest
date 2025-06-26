@@ -11,7 +11,7 @@ const MapComponent: React.FC<MapComponentProps> = ({ onStartLaserGame }) => {
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markerRef = useRef<mapboxgl.Marker | null>(null);
   const playerMarkerRef = useRef<mapboxgl.Marker | null>(null);
-  const [playerPosition, setPlayerPosition] = useState<[number, number]>([-74.5, 40] as [number, number]); // [lng, lat]
+  const [playerPosition, setPlayerPosition] = useState<[number, number]>([121.566972, 25.040472] as [number, number]); // [lng, lat]
   const [loading, setLoading] = useState(false);
   const [showLoading, setShowLoading] = useState(false);
   const [showDialog, setShowDialog] = useState(false);

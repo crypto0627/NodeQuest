@@ -21,7 +21,6 @@ const RewardModalStyles = `
     animation: fadeIn 0.5s ease-out 0.1s forwards;
     opacity: 0;
     animation-fill-mode: forwards;
-    border-image: linear-gradient(135deg, #00fff7, #ff00e6, #39ff14) 1;
   }
   .play-again-btn {
     position: relative;
@@ -87,7 +86,7 @@ export default function RewardModal({ onClose, onRestart }: { onClose?: () => vo
         {/* Animated Neon Border Container */}
         <div
           ref={neonGlowRef}
-          className="reward-modal-content relative flex flex-col items-center justify-center px-12 py-10 rounded-3xl border-[3px] bg-[rgba(10,15,30,0.92)]"
+          className="reward-modal-content relative flex flex-col items-center justify-center px-12 py-10 rounded-3xl border-[3px] border-[#00fff7] bg-[rgba(10,15,30,0.92)]"
           style={{
             minWidth: 380,
             maxWidth: 440,
