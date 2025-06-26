@@ -127,7 +127,7 @@ const MapComponent: React.FC<MapComponentProps> = ({ onStartLaserGame }) => {
     mapRef.current = new mapboxgl.Map({
       container: mapContainerRef.current!,
       style: 'mapbox://styles/mapbox/streets-v12',
-      center: [-74.5, 40], // starting position [lng, lat]
+      center: [121.566972, 25.040472], // starting position [lng, lat]
       zoom: 9, // starting zoom
       pitch: 0,
       bearing: 0

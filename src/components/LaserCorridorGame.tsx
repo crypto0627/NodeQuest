@@ -5,6 +5,7 @@ import * as CANNON from 'cannon-es';
 import RewardModal from './RewardModal';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 
 // 遊戲狀態
 const STATE = {
@@ -145,21 +146,6 @@ export default function LaserCorridorGame({ onClose, onRestart }: { onClose?: ()
         layer++;
       }
     }
-    // 5. 地面 perspective 網格線+動態光紋
-    const gridLines: THREE.LineSegments[] = [];
-    const gridMat = new THREE.LineBasicMaterial({ color: '#00fff7', transparent: true, opacity: 0.18 });
-    const gridGeo = new THREE.BufferGeometry();
-    const gridVerts: number[] = [];
-    for (let i = -10; i <= 10; i++) {
-      gridVerts.push(i, 0.01, 0, i, 0.01, -240);
-    }
-    for (let i = 0; i >= END_Z; i -= 8) {
-      gridVerts.push(-10, 0.01, i, 10, 0.01, i);
-    }
-    gridGeo.setAttribute('position', new THREE.Float32BufferAttribute(gridVerts, 3));
-    const grid = new THREE.LineSegments(gridGeo, gridMat);
-    scene.add(grid);
-    gridLines.push(grid);
     // 動態地板光紋
     const floorGlowGeo = new THREE.PlaneGeometry(20, 80);
     const floorGlowMat = new THREE.MeshBasicMaterial({ color: '#39ff14', transparent: true, opacity: 0.08 });
@@ -188,16 +174,32 @@ export default function LaserCorridorGame({ onClose, onRestart }: { onClose?: ()
     // 地板（無限延伸）
     const FLOOR_LENGTH = 80;
     const FLOOR_COUNT = 3;
+    // 新的透明網格地板材質
     const floorMatCanvas = document.createElement('canvas');
-    floorMatCanvas.width = 64; floorMatCanvas.height = 64;
+    floorMatCanvas.width = 128; floorMatCanvas.height = 128;
     const fctx = floorMatCanvas.getContext('2d')!;
-    fctx.fillStyle = '#3366ff'; fctx.fillRect(0, 0, 64, 64);
-    fctx.fillStyle = '#fff3';
-    for (let i = 0; i < 8; i++) fctx.fillRect(i * 8, 0, 4, 64);
+    fctx.fillStyle = 'rgba(10, 15, 30, 0.4)'; // 半透明基底
+    fctx.fillRect(0, 0, 128, 128);
+    fctx.strokeStyle = '#00fff7bb'; // 霓虹青色網格
+    fctx.lineWidth = 2;
+    fctx.shadowColor = '#00fff7';
+    fctx.shadowBlur = 8;
+    for (let i = 0; i <= 128; i += 32) {
+      fctx.beginPath(); fctx.moveTo(i, 0); fctx.lineTo(i, 128); fctx.stroke();
+      fctx.beginPath(); fctx.moveTo(0, i); fctx.lineTo(128, i); fctx.stroke();
+    }
     const floorTex = new THREE.CanvasTexture(floorMatCanvas);
     floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
-    floorTex.repeat.set(10, 16);
-    const floorMat = new THREE.MeshPhysicalMaterial({ map: floorTex, roughness: 0.2, metalness: 0.2, clearcoat: 0.5, clearcoatRoughness: 0.2, reflectivity: 0.3 });
+    floorTex.repeat.set(12, 12);
+    
+    const floorMat = new THREE.MeshPhysicalMaterial({
+      map: floorTex,
+      transparent: true,
+      metalness: 0.5,
+      roughness: 0.4,
+      reflectivity: 0.6,
+      envMapIntensity: 1.5,
+    });
     const floorGeo = new THREE.PlaneGeometry(20, FLOOR_LENGTH);
     const floorMeshes: THREE.Mesh[] = [];
     const floorBodies: CANNON.Body[] = [];
@@ -215,24 +217,89 @@ export default function LaserCorridorGame({ onClose, onRestart }: { onClose?: ()
       world.addBody(body);
       floorBodies.push(body);
     }
-    // Player: CapsuleGeometry + neon 邊緣 + 動態色彩
-    const playerGeo = new THREE.CapsuleGeometry(0.5, 0.5, 8, 16);
-    const playerMat = new THREE.MeshPhysicalMaterial({ color: 0x00ff99, metalness: 0.7, roughness: 0.18, clearcoat: 0.8, clearcoatRoughness: 0.1, emissive: 0x00fff7, emissiveIntensity: 0.25 });
-    const playerMesh = new THREE.Mesh(playerGeo, playerMat);
-    playerMesh.castShadow = true;
-    playerMesh.position.y = 1.1;
-    scene.add(playerMesh);
+    // Player: Load custom 3D model with placeholder
+    const playerHolder = new THREE.Group();
+    scene.add(playerHolder);
+
+    const placeholderMat = new THREE.MeshPhysicalMaterial({ color: 0x00ff99, metalness: 0.7, roughness: 0.18, emissive: 0x00fff7, emissiveIntensity: 0.25 });
+    const placeholderGeo = new THREE.CapsuleGeometry(0.5, 0.8, 4, 8);
+    const placeholderMesh = new THREE.Mesh(placeholderGeo, placeholderMat);
+    playerHolder.add(placeholderMesh);
+
     const playerBody = new CANNON.Body({ mass: 5, fixedRotation: true });
-    playerBody.addShape(new CANNON.Box(new CANNON.Vec3(0.5, 1.1, 0.5)));
+    const playerShape = new CANNON.Box(new CANNON.Vec3(0.5, 0.9, 0.5));
+    playerBody.addShape(playerShape);
     playerBody.position.set(0, 2, 0);
     world.addBody(playerBody);
+
+    // 玩家模型材質
+    const primaryMat = new THREE.MeshPhysicalMaterial({
+      color: 0xbbddff, // 淡藍金屬
+      metalness: 0.9,
+      roughness: 0.2,
+      clearcoat: 0.8,
+      clearcoatRoughness: 0.2,
+    });
+    const secondaryMat = new THREE.MeshPhysicalMaterial({
+      color: 0x444466, // 深藍灰金屬
+      metalness: 0.8,
+      roughness: 0.5,
+    });
+    const emissiveMat = new THREE.MeshPhysicalMaterial({
+      color: 0x00fff7, // 青色光暈
+      emissive: 0x00fff7,
+      emissiveIntensity: 2.5,
+      toneMapped: false,
+    });
+
+    const loader = new OBJLoader();
+    loader.load(
+      '/sprites/base.obj',
+      (obj) => {
+        playerHolder.remove(placeholderMesh);
+        placeholderMesh.geometry.dispose();
+
+        const model = obj;
+        // 旋轉模型使其朝前 (-Z)
+        model.rotation.y = Math.PI;
+        
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3());
+        const scale = 1.8 / size.y;
+        model.scale.set(scale, scale, scale);
+
+        const center = box.getCenter(new THREE.Vector3());
+        model.position.sub(center.multiplyScalar(scale));
+
+        // 為模型的不同部分上色
+        let partIndex = 0;
+        model.traverse(function (child) {
+          if (child instanceof THREE.Mesh) {
+            child.castShadow = true;
+            if (partIndex === 0) {
+              child.material = primaryMat;
+            } else if (partIndex < 4) { // 假設前幾個部分是次要裝飾
+              child.material = secondaryMat;
+            } else { // 其他部分作為發光細節
+              child.material = emissiveMat;
+            }
+            partIndex++;
+          }
+        });
+        playerHolder.add(model);
+      },
+      undefined,
+      (error) => {
+        console.error('Error loading player model, using placeholder.', error);
+      }
+    );
     // 光源
     const amb = new THREE.AmbientLight(0x99aaff, 0.8);
     const dir = new THREE.DirectionalLight(0xaaaaff, 1.5);
     dir.position.set(5, 10, 5);
     dir.castShadow = true;
     scene.add(amb, dir);
-    // 複雜雷射型態（全部紅色星際戰艦風格）
+    // --- 專業雷射佈局 ---
     type LaserType = 'H' | 'V' | 'MOVE' | 'ROTATE' | 'BLINK' | 'THICK' | 'CROSS';
     interface LaserObj {
       mesh: THREE.Mesh;
@@ -250,154 +317,138 @@ export default function LaserCorridorGame({ onClose, onRestart }: { onClose?: ()
       crossEndSpheres?: [THREE.Mesh, THREE.Mesh];
     }
     const lasers: LaserObj[] = [];
-    const LASER_COUNT = 40;
-    for (let i = 0; i < LASER_COUNT; i++) {
-      // 均勻分布雷射在 -40 ~ END_LASER
-      const z = -40 + (END_LASER + 40) * (i / (LASER_COUNT - 1));
-      const baseY = 1.2 + Math.random() * 1.0;
-      const type: LaserType = (['H','V','MOVE','ROTATE','BLINK','THICK','CROSS'])[i%7] as LaserType;
+
+    const createLaser = (
+      type: LaserType,
+      position: THREE.Vector3,
+      options: Partial<LaserObj> & { rotation?: THREE.Euler, scale?: THREE.Vector3 } = {}
+    ) => {
       let mesh: THREE.Mesh | undefined = undefined;
       let crossPair: THREE.Mesh | undefined = undefined;
       let glow: THREE.Mesh | undefined = undefined;
       let endSpheres: [THREE.Mesh, THREE.Mesh] | undefined = undefined;
       let crossEndSpheres: [THREE.Mesh, THREE.Mesh] | undefined = undefined;
-      // 束身材質
+      
       const laserMat = new THREE.MeshPhysicalMaterial({ color: '#ff2222', emissive: 0xff2222, emissiveIntensity: 1.5, transparent: true, opacity: 0.8, metalness: 0.7, roughness: 0.1, transmission: 0.7, thickness: 1.5, clearcoat: 1, clearcoatRoughness: 0.1 });
-      // 外發光
       const glowMat = new THREE.MeshBasicMaterial({ color: '#ff2222', transparent: true, opacity: 0.18 });
-      // 端點能量球材質
       const sphereMat = new THREE.MeshPhysicalMaterial({ color: '#ff5555', emissive: 0xff2222, emissiveIntensity: 2.5, transparent: true, opacity: 0.85, metalness: 0.8, roughness: 0.1, transmission: 0.9, thickness: 2, clearcoat: 1 });
-      switch(type) {
-        case 'H':
-          mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 10, 32, 1, true), laserMat.clone());
-          mesh.position.set(0, baseY, z);
-          mesh.rotation.z = Math.PI / 2;
-          glow = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 10.2, 32, 1, true), glowMat.clone());
-          glow.position.copy(mesh.position);
-          glow.rotation.copy(mesh.rotation);
-          scene.add(glow);
-          // 端點能量球
-          const s1 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
-          const s2 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
-          s1.position.set(-5, baseY, z);
-          s2.position.set(5, baseY, z);
-          scene.add(s1, s2);
-          endSpheres = [s1, s2];
-          break;
-        case 'V':
-          mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 6, 32, 1, true), laserMat.clone());
-          mesh.position.set(-4 + Math.random() * 8, baseY, z);
-          glow = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 6.2, 32, 1, true), glowMat.clone());
-          glow.position.copy(mesh.position);
-          scene.add(glow);
-          // 端點能量球
-          const sv1 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
-          const sv2 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
-          sv1.position.set(mesh.position.x, baseY-3, z);
-          sv2.position.set(mesh.position.x, baseY+3, z);
-          scene.add(sv1, sv2);
-          endSpheres = [sv1, sv2];
-          break;
-        case 'MOVE':
-          mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 8, 32, 1, true), laserMat.clone());
-          mesh.position.set(-3 + Math.random() * 6, baseY, z);
-          glow = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 8.2, 32, 1, true), glowMat.clone());
-          glow.position.copy(mesh.position);
-          scene.add(glow);
-          // 端點能量球
-          const sm1 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
-          const sm2 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
-          sm1.position.set(mesh.position.x, baseY-4, z);
-          sm2.position.set(mesh.position.x, baseY+4, z);
-          scene.add(sm1, sm2);
-          endSpheres = [sm1, sm2];
-          break;
-        case 'ROTATE':
-          mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 9, 32, 1, true), laserMat.clone());
-          mesh.position.set(0, baseY, z);
-          glow = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 9.2, 32, 1, true), glowMat.clone());
-          glow.position.copy(mesh.position);
-          scene.add(glow);
-          // 端點能量球
-          const sr1 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
-          const sr2 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
-          sr1.position.set(0, baseY-4.5, z);
-          sr2.position.set(0, baseY+4.5, z);
-          scene.add(sr1, sr2);
-          endSpheres = [sr1, sr2];
-          break;
-        case 'BLINK':
-          mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 10, 32, 1, true), laserMat.clone());
-          mesh.position.set(0, baseY, z);
-          glow = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 10.2, 32, 1, true), glowMat.clone());
-          glow.position.copy(mesh.position);
-          scene.add(glow);
-          // 端點能量球
-          const sb1 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
-          const sb2 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
-          sb1.position.set(0, baseY-5, z);
-          sb2.position.set(0, baseY+5, z);
-          scene.add(sb1, sb2);
-          endSpheres = [sb1, sb2];
-          break;
-        case 'THICK':
-          mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 10, 32, 1, true), laserMat.clone());
-          mesh.position.set(0, baseY, z);
-          glow = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 10.2, 32, 1, true), glowMat.clone());
-          glow.position.copy(mesh.position);
-          scene.add(glow);
-          // 端點能量球
-          const st1 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
-          const st2 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
-          st1.position.set(0, baseY-5, z);
-          st2.position.set(0, baseY+5, z);
-          scene.add(st1, st2);
-          endSpheres = [st1, st2];
-          break;
-        case 'CROSS':
-          mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 8, 32, 1, true), laserMat.clone());
-          mesh.position.set(0, baseY, z);
-          crossPair = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 8, 32, 1, true), laserMat.clone());
-          crossPair.position.set(0, baseY, z);
-          crossPair.rotation.z = 0;
-          scene.add(crossPair);
-          glow = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 8.2, 32, 1, true), glowMat.clone());
-          glow.position.copy(mesh.position);
-          scene.add(glow);
-          // 端點能量球
-          const sc1 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
-          const sc2 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
-          sc1.position.set(0, baseY-4, z);
-          sc2.position.set(0, baseY+4, z);
-          scene.add(sc1, sc2);
-          endSpheres = [sc1, sc2];
-          // crossPair 端點
-          const csc1 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
-          const csc2 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
-          csc1.position.set(-4, baseY, z);
-          csc2.position.set(4, baseY, z);
-          scene.add(csc1, csc2);
-          crossEndSpheres = [csc1, csc2];
-          break;
+      
+      const geoMap: { [key in LaserType]?: { geo: THREE.CylinderGeometry, glowGeo: THREE.CylinderGeometry, length: number } } = {
+        H: { geo: new THREE.CylinderGeometry(0.14, 0.14, 10, 32, 1, true), glowGeo: new THREE.CylinderGeometry(0.25, 0.25, 10.2, 32, 1, true), length: 10 },
+        V: { geo: new THREE.CylinderGeometry(0.14, 0.14, 6, 32, 1, true), glowGeo: new THREE.CylinderGeometry(0.25, 0.25, 6.2, 32, 1, true), length: 6 },
+        MOVE: { geo: new THREE.CylinderGeometry(0.14, 0.14, 8, 32, 1, true), glowGeo: new THREE.CylinderGeometry(0.25, 0.25, 8.2, 32, 1, true), length: 8 },
+        ROTATE: { geo: new THREE.CylinderGeometry(0.14, 0.14, 9, 32, 1, true), glowGeo: new THREE.CylinderGeometry(0.25, 0.25, 9.2, 32, 1, true), length: 9 },
+        BLINK: { geo: new THREE.CylinderGeometry(0.14, 0.14, 10, 32, 1, true), glowGeo: new THREE.CylinderGeometry(0.25, 0.25, 10.2, 32, 1, true), length: 10 },
+        THICK: { geo: new THREE.CylinderGeometry(0.14, 0.14, 10, 32, 1, true), glowGeo: new THREE.CylinderGeometry(0.25, 0.25, 10.2, 32, 1, true), length: 10 },
+        CROSS: { geo: new THREE.CylinderGeometry(0.14, 0.14, 8, 32, 1, true), glowGeo: new THREE.CylinderGeometry(0.25, 0.25, 8.2, 32, 1, true), length: 8 },
+      };
+
+      const spec = geoMap[type];
+      if (!spec) return;
+
+      mesh = new THREE.Mesh(spec.geo, laserMat.clone());
+      mesh.position.copy(position);
+      if (options.rotation) mesh.rotation.copy(options.rotation);
+      if (options.scale) mesh.scale.copy(options.scale);
+
+      glow = new THREE.Mesh(spec.glowGeo, glowMat.clone());
+      glow.position.copy(mesh.position);
+      glow.rotation.copy(mesh.rotation);
+      glow.scale.copy(mesh.scale);
+      scene.add(glow);
+
+      const s1 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
+      const s2 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
+      const halfLen = spec.length / 2;
+      const axis = type === 'H' ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,1,0);
+      s1.position.copy(position).addScaledVector(axis, -halfLen);
+      s2.position.copy(position).addScaledVector(axis, halfLen);
+      scene.add(s1, s2);
+      endSpheres = [s1, s2];
+
+      if (type === 'CROSS') {
+        crossPair = new THREE.Mesh(spec.geo, laserMat.clone());
+        crossPair.position.copy(position);
+        crossPair.rotation.z = 0;
+        scene.add(crossPair);
+
+        const cs1 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
+        const cs2 = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 20), sphereMat.clone());
+        cs1.position.copy(position).addScaledVector(new THREE.Vector3(1,0,0), -halfLen);
+        cs2.position.copy(position).addScaledVector(new THREE.Vector3(1,0,0), halfLen);
+        scene.add(cs1, cs2);
+        crossEndSpheres = [cs1, cs2];
       }
-      if (!mesh) continue;
+      
       scene.add(mesh);
       lasers.push({
-        mesh,
-        type,
-        baseX: mesh.position.x,
-        baseY,
-        z,
+        mesh, type,
+        baseX: position.x, baseY: position.y, z: position.z,
         speed: 0.8 + Math.random() * 0.7,
         range: 2 + Math.random() * 2,
         phase: Math.random() * Math.PI * 2,
         thickBase: 0.14,
-        crossPair,
-        glow,
-        endSpheres,
-        crossEndSpheres
+        crossPair, glow, endSpheres, crossEndSpheres,
+        ...options,
       });
-    }
+    };
+    
+    // 區域化佈局
+    const zones = [
+      { type: 'GATE' as const, z: -40, startZ: -40, endZ: -40, count: 1 },
+      { type: 'WAVE_TUNNEL' as const, startZ: -100, endZ: -240, count: 12 },
+      { type: 'SIDE_CRUSHERS' as const, startZ: -280, endZ: -420, count: 6 },
+      { type: 'ROTATING_BLADES'as const, startZ: -480, endZ: -640, count: 8 },
+      { type: 'BLINK_MAZE' as const, startZ: -700, endZ: -860, count: 18 },
+      { type: 'FINAL_GAUNTLET' as const, startZ: -920, endZ: -1060, count: 15 },
+    ];
+
+    zones.forEach(zone => {
+      const zStep = (zone.endZ - zone.startZ) / (zone.count || 1);
+      switch(zone.type) {
+        case 'GATE':
+          createLaser('V', new THREE.Vector3(-3.5, 3.5, zone.z));
+          createLaser('V', new THREE.Vector3(3.5, 3.5, zone.z));
+          createLaser('H', new THREE.Vector3(0, 5, zone.z), { rotation: new THREE.Euler(0, 0, Math.PI/2) });
+          break;
+        case 'WAVE_TUNNEL':
+          for (let i=0; i<zone.count; i++) {
+            const z = zone.startZ + i * zStep;
+            createLaser('H', new THREE.Vector3(0, 3.5, z), { rotation: new THREE.Euler(0,0,Math.PI/2), speed: 1.2, range: 4, phase: i*0.8 });
+          }
+          break;
+        case 'SIDE_CRUSHERS':
+          for (let i=0; i<zone.count; i++) {
+            const z = zone.startZ + i * zStep;
+            const side = i%2 === 0 ? 1 : -1;
+            createLaser('V', new THREE.Vector3(side * 6, 3, z), { speed: 1.5, range: 4, phase: i * Math.PI });
+          }
+          break;
+        case 'ROTATING_BLADES':
+          for (let i=0; i<zone.count; i++) {
+            const z = zone.startZ + i * zStep;
+            createLaser('ROTATE', new THREE.Vector3(0, 3, z), { speed: 0.6 + Math.random()*0.4, phase: i*Math.PI/2 });
+          }
+          break;
+        case 'BLINK_MAZE':
+           for (let i=0; i<zone.count; i++) {
+            const z = zone.startZ + i * zStep;
+            const x = (i%3 - 1) * 3.5; // -3.5, 0, 3.5
+            createLaser('BLINK', new THREE.Vector3(x, 3.5, z), { phase: i*0.4 });
+          }
+          break;
+        case 'FINAL_GAUNTLET':
+          for (let i=0; i<zone.count; i++) {
+            const z = zone.startZ + i*zStep + Math.random()*zStep*0.5;
+            const type: LaserType = (['MOVE','CROSS','THICK'])[i%3] as LaserType;
+            const x = (Math.random() - 0.5) * 6;
+            const y = 2 + Math.random() * 2;
+            createLaser(type, new THREE.Vector3(x, y, z), { speed: 1.5 + Math.random(), range: 3 + Math.random()*2 });
+          }
+          break;
+      }
+    });
+
     // 螢光綠終點光條
     const endBarGeo = new THREE.PlaneGeometry(16, 0.7);
     const endBarMat = new THREE.MeshPhysicalMaterial({ color: '#39ff14', transparent: true, opacity: 0.95, emissive: 0x39ff14, emissiveIntensity: 2.5, metalness: 0.7, roughness: 0.1 });
@@ -450,15 +501,22 @@ export default function LaserCorridorGame({ onClose, onRestart }: { onClose?: ()
         if (playerBody.position.x > 4.5) playerBody.position.x = 4.5;
         if (playerBody.position.x < -4.5) playerBody.position.x = -4.5;
         // Player動畫
-        const pulse = 1 + 0.08 * Math.sin(now * 0.008);
-        playerMesh.scale.set(pulse, pulse, pulse);
-        const color = new THREE.Color();
-        color.setHSL(0.4 + 0.1 * Math.sin(now * 0.001), 0.8, 0.6);
-        (playerMesh.material as THREE.MeshPhysicalMaterial).color = color;
-        (playerMesh.material as THREE.MeshPhysicalMaterial).emissive = color.clone().lerp(new THREE.Color(0xffffff), 0.3);
-        playerMesh.position.copy(playerBody.position as unknown as THREE.Vector3);
+        playerHolder.scale.y = 1 + 0.08 * Math.sin(now * 0.008); // 呼吸效果
+
+        // 發光材質的脈動效果
+        playerHolder.traverse((child) => {
+          if (child instanceof THREE.Mesh && child.material === emissiveMat) {
+            (child.material as THREE.MeshPhysicalMaterial).emissiveIntensity = 2.0 + 1.5 * Math.sin(now * 0.005);
+          }
+        });
+
+        playerHolder.position.copy(playerBody.position as unknown as THREE.Vector3);
         camera.position.set(playerBody.position.x, playerBody.position.y + 5, playerBody.position.z + 8);
-        camera.lookAt(playerMesh.position);
+        camera.lookAt(playerHolder.position);
+        
+        // --- 背景跟隨相機 ---
+        bgMesh.position.z = camera.position.z - 120;
+
         // 地板無限延伸：根據玩家z軸動態平移地板
         for (let i = 0; i < FLOOR_COUNT; i++) {
           let mesh = floorMeshes[i];
@@ -490,92 +548,87 @@ export default function LaserCorridorGame({ onClose, onRestart }: { onClose?: ()
           switch(l.type) {
             case 'H':
               l.mesh.position.y = l.baseY + Math.sin(now * 0.001 * l.speed! + l.phase!) * l.range! * 0.5;
-              l.mesh.position.y = Math.max(1.2, Math.min(2.2, l.mesh.position.y));
-              l.mesh.position.z = l.z;
+              l.mesh.position.y = Math.max(1.2, l.mesh.position.y);
               if (l.glow) { l.glow.position.copy(l.mesh.position); l.glow.rotation.copy(l.mesh.rotation); }
               if (l.endSpheres) {
-                l.endSpheres[0].position.set(-5, l.mesh.position.y, l.mesh.position.z);
-                l.endSpheres[1].position.set(5, l.mesh.position.y, l.mesh.position.z);
+                const halfLen = (l.mesh.geometry as THREE.CylinderGeometry).parameters.height / 2;
+                l.endSpheres[0].position.copy(l.mesh.position).add(new THREE.Vector3(halfLen, 0, 0).applyEuler(l.mesh.rotation));
+                l.endSpheres[1].position.copy(l.mesh.position).add(new THREE.Vector3(-halfLen, 0, 0).applyEuler(l.mesh.rotation));
               }
               break;
             case 'V':
               l.mesh.position.x = l.baseX + Math.sin(now * 0.001 * l.speed! + l.phase!) * l.range!;
-              l.mesh.position.z = l.z;
-              l.mesh.position.y = l.baseY;
               if (l.glow) { l.glow.position.copy(l.mesh.position); }
               if (l.endSpheres) {
-                l.endSpheres[0].position.set(l.mesh.position.x, l.baseY-3, l.mesh.position.z);
-                l.endSpheres[1].position.set(l.mesh.position.x, l.baseY+3, l.mesh.position.z);
+                const halfLen = (l.mesh.geometry as THREE.CylinderGeometry).parameters.height / 2;
+                l.endSpheres[0].position.set(l.mesh.position.x, l.mesh.position.y-halfLen, l.mesh.position.z);
+                l.endSpheres[1].position.set(l.mesh.position.x, l.mesh.position.y+halfLen, l.mesh.position.z);
               }
               break;
             case 'MOVE':
               l.mesh.position.x = l.baseX + Math.sin(now * 0.001 * l.speed! + l.phase!) * l.range! * 0.7;
               l.mesh.position.y = l.baseY + Math.cos(now * 0.001 * l.speed! + l.phase!) * l.range! * 0.4;
-              l.mesh.position.y = Math.max(1.2, Math.min(2.2, l.mesh.position.y));
-              l.mesh.position.z = l.z;
+              l.mesh.position.y = Math.max(1.2, l.mesh.position.y);
               if (l.glow) { l.glow.position.copy(l.mesh.position); }
               if (l.endSpheres) {
-                l.endSpheres[0].position.set(l.mesh.position.x, l.mesh.position.y-4, l.mesh.position.z);
-                l.endSpheres[1].position.set(l.mesh.position.x, l.mesh.position.y+4, l.mesh.position.z);
+                 const halfLen = (l.mesh.geometry as THREE.CylinderGeometry).parameters.height / 2;
+                l.endSpheres[0].position.set(l.mesh.position.x, l.mesh.position.y-halfLen, l.mesh.position.z);
+                l.endSpheres[1].position.set(l.mesh.position.x, l.mesh.position.y+halfLen, l.mesh.position.z);
               }
               break;
             case 'ROTATE':
-              l.mesh.position.z = l.z;
-              l.mesh.position.y = l.baseY;
-              l.mesh.rotation.y = now * 0.001 * l.speed! + l.phase!;
+              l.mesh.rotation.z = now * 0.001 * l.speed! + l.phase!;
               if (l.glow) { l.glow.position.copy(l.mesh.position); l.glow.rotation.copy(l.mesh.rotation); }
               if (l.endSpheres) {
-                l.endSpheres[0].position.set(0, l.baseY-4.5, l.mesh.position.z);
-                l.endSpheres[1].position.set(0, l.baseY+4.5, l.mesh.position.z);
+                const halfLen = (l.mesh.geometry as THREE.CylinderGeometry).parameters.height / 2;
+                const p1 = new THREE.Vector3(0, halfLen, 0).applyEuler(l.mesh.rotation);
+                const p2 = new THREE.Vector3(0, -halfLen, 0).applyEuler(l.mesh.rotation);
+                l.endSpheres[0].position.copy(l.mesh.position).add(p1);
+                l.endSpheres[1].position.copy(l.mesh.position).add(p2);
               }
               break;
             case 'BLINK':
-              l.mesh.position.z = l.z;
-              l.mesh.position.y = l.baseY;
-              const blink = Math.abs(Math.sin(now * 0.003 + l.phase!));
-              (l.mesh.material as THREE.MeshPhysicalMaterial).opacity = 0.3 + 0.7 * blink;
-              if (l.glow) { l.glow.position.copy(l.mesh.position); }
+              const blinkOn = Math.sin(now * 0.006 + l.phase!) > 0; // 更快的開關效果
+              l.mesh.visible = blinkOn;
+              if (l.glow) l.glow.visible = blinkOn;
               if (l.endSpheres) {
-                l.endSpheres[0].position.set(0, l.baseY-5, l.mesh.position.z);
-                l.endSpheres[1].position.set(0, l.baseY+5, l.mesh.position.z);
+                l.endSpheres[0].visible = blinkOn;
+                l.endSpheres[1].visible = blinkOn;
               }
               break;
             case 'THICK':
-              l.mesh.position.z = l.z;
-              l.mesh.position.y = l.baseY;
               const thick = l.thickBase! + 0.18 * Math.abs(Math.sin(now * 0.002 + l.phase!));
-              l.mesh.scale.x = thick / 0.14;
-              l.mesh.scale.y = 1;
-              l.mesh.scale.z = thick / 0.14;
-              if (l.glow) { l.glow.position.copy(l.mesh.position); l.glow.scale.x = l.mesh.scale.x*1.1; l.glow.scale.z = l.mesh.scale.z*1.1; }
+              l.mesh.scale.x = thick / l.thickBase!;
+              l.mesh.scale.z = thick / l.thickBase!;
+              if (l.glow) { l.glow.position.copy(l.mesh.position); l.glow.scale.copy(l.mesh.scale); }
               if (l.endSpheres) {
-                l.endSpheres[0].position.set(0, l.baseY-5, l.mesh.position.z);
-                l.endSpheres[1].position.set(0, l.baseY+5, l.mesh.position.z);
+                const halfLen = (l.mesh.geometry as THREE.CylinderGeometry).parameters.height / 2;
+                l.endSpheres[0].position.set(l.mesh.position.x, l.mesh.position.y-halfLen, l.mesh.position.z);
+                l.endSpheres[1].position.set(l.mesh.position.x, l.mesh.position.y+halfLen, l.mesh.position.z);
               }
               break;
             case 'CROSS':
-              l.mesh.position.z = l.z;
               l.mesh.position.y = l.baseY + Math.sin(now * 0.001 * l.speed! + l.phase!) * 0.7;
               if (l.crossPair) {
-                l.crossPair.position.z = l.z;
-                l.crossPair.position.y = l.baseY;
-                l.crossPair.position.x = l.baseX + Math.sin(now * 0.001 * l.speed! + l.phase!) * 2.5;
+                l.crossPair.position.x = l.baseX + Math.sin(now * 0.001 * l.speed! + l.phase! * 1.5) * 2.5;
                 if (l.crossEndSpheres) {
-                  l.crossEndSpheres[0].position.set(l.crossPair.position.x-4, l.crossPair.position.y, l.crossPair.position.z);
-                  l.crossEndSpheres[1].position.set(l.crossPair.position.x+4, l.crossPair.position.y, l.crossPair.position.z);
+                  const halfLen = (l.crossPair.geometry as THREE.CylinderGeometry).parameters.height / 2;
+                  l.crossEndSpheres[0].position.set(l.crossPair.position.x-halfLen, l.crossPair.position.y, l.crossPair.position.z);
+                  l.crossEndSpheres[1].position.set(l.crossPair.position.x+halfLen, l.crossPair.position.y, l.crossPair.position.z);
                 }
               }
               if (l.glow) { l.glow.position.copy(l.mesh.position); }
               if (l.endSpheres) {
-                l.endSpheres[0].position.set(0, l.mesh.position.y-4, l.mesh.position.z);
-                l.endSpheres[1].position.set(0, l.mesh.position.y+4, l.mesh.position.z);
+                const halfLen = (l.mesh.geometry as THREE.CylinderGeometry).parameters.height / 2;
+                l.endSpheres[0].position.set(l.mesh.position.x, l.mesh.position.y-halfLen, l.mesh.position.z);
+                l.endSpheres[1].position.set(l.mesh.position.x, l.mesh.position.y+halfLen, l.mesh.position.z);
               }
               break;
           }
         });
         // 碰撞偵測
         for (const l of lasers) {
-          if (playerMesh.position.distanceTo(l.mesh.position) < 1.1) {
+          if (playerHolder.position.distanceTo(l.mesh.position) < 1.1) {
             setGameState(STATE.GAMEOVER);
             isGameEnded = true;
             break;
